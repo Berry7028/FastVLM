@@ -41,21 +41,26 @@ class FastVLMHandler:
         try:
             logger.info(f"Loading model: {self.model_name}")
 
-            # Load processor
-            self.processor = AutoProcessor.from_pretrained(self.model_name)
+            # Load processor with trust_remote_code for custom implementations
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_name,
+                trust_remote_code=True
+            )
 
             # Load model with appropriate precision
             if self.device == "cuda":
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
                     torch_dtype=torch.float16,
-                    device_map="auto"
+                    device_map="auto",
+                    trust_remote_code=True
                 )
             else:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
                     torch_dtype=torch.float32,
-                    device_map="cpu"
+                    device_map="cpu",
+                    trust_remote_code=True
                 )
 
             self.model.eval()
