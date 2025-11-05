@@ -36,6 +36,23 @@ pip install -r requirements.txt
 
 初回実行時、HuggingFaceからモデル（約1.5GB）がダウンロードされます。インターネット接続が必要です。
 
+#### モデルキャッシュ
+
+モデルは自動的に以下の位置に保存されます：
+
+```
+project_root/models/
+├── hub/
+│   ├── models--apple--FastVLM-1.5B/
+│   │   ├── blobs/                 # モデルの実ファイル
+│   │   ├── refs/
+│   │   └── snapshots/
+│   └── .locks/
+└── ...その他のHFキャッシュファイル
+```
+
+> **注意**：`models/`フォルダはGitignoreに登録されているため、リポジトリには含まれません。初回実行時に自動ダウンロードされます。
+
 ## 使用方法
 
 ### 基本的な実行

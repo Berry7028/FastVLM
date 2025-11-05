@@ -6,8 +6,14 @@ import cv2
 import yaml
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import Dict, Any
+
+# Set Hugging Face cache directory before importing model_handler
+models_dir = Path(__file__).parent / "models"
+models_dir.mkdir(exist_ok=True)
+os.environ['HF_HOME'] = str(models_dir)
 
 from camera_utils import CameraCapture
 from model_handler import FastVLMHandler

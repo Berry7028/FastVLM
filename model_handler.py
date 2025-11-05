@@ -2,12 +2,19 @@
 FastVLM model handler for image description generation
 """
 import torch
+import os
 from transformers import AutoProcessor, AutoModelForCausalLM
 from PIL import Image
 from typing import Optional
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Set custom Hugging Face cache directory
+MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR.mkdir(exist_ok=True)
+os.environ['HF_HOME'] = str(MODELS_DIR)
 
 
 class FastVLMHandler:
