@@ -3,11 +3,7 @@ FastVLM model handler for image description generation
 """
 import torch
 import os
-from transformers import (
-    AutoModelForCausalLM,
-    AutoImageProcessor,
-    AutoTokenizer,
-)
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from PIL import Image
 from typing import Optional
 import logging
@@ -19,6 +15,9 @@ logger = logging.getLogger(__name__)
 MODELS_DIR = Path(__file__).parent / "models"
 MODELS_DIR.mkdir(exist_ok=True)
 os.environ['HF_HOME'] = str(MODELS_DIR)
+
+# FastVLM specific constants
+IMAGE_TOKEN_INDEX = -200
 
 
 class FastVLMHandler:
@@ -34,7 +33,6 @@ class FastVLMHandler:
         """
         self.model_name = model_name
         self.device = device if torch.cuda.is_available() else "cpu"
-        self.image_processor = None
         self.tokenizer = None
         self.model = None
         self._is_loaded = False
@@ -42,16 +40,9 @@ class FastVLMHandler:
         logger.info(f"FastVLMHandler initialized for {self.model_name} on {self.device}")
 
     def load_model(self) -> bool:
-        """Load FastVLM model and components from HuggingFace"""
+        """Load FastVLM model from HuggingFace"""
         try:
             logger.info(f"Loading model: {self.model_name}")
-
-            # Load image processor
-            logger.info("Loading image processor...")
-            self.image_processor = AutoImageProcessor.from_pretrained(
-                self.model_name,
-                trust_remote_code=True
-            )
 
             # Load tokenizer
             logger.info("Loading tokenizer...")
@@ -63,19 +54,30 @@ class FastVLMHandler:
 
             # Load model with appropriate precision
             logger.info("Loading model weights...")
-            if self.device == "cuda":
+            try:
+                # Try with flash_attention_2 first (if CUDA available)
+                if self.device == "cuda":
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.float16,
+                        device_map="auto",
+                        trust_remote_code=True,
+                        attn_implementation="flash_attention_2"
+                    )
+                else:
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.float32,
+                        device_map="cpu",
+                        trust_remote_code=True
+                    )
+            except Exception as e:
+                # Fallback without flash_attention_2
+                logger.warning(f"Flash attention not available, using standard attention: {e}")
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
-                    torch_dtype=torch.float16,
-                    device_map="auto",
-                    trust_remote_code=True,
-                    attn_implementation="flash_attention_2"
-                )
-            else:
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    torch_dtype=torch.float32,
-                    device_map="cpu",
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    device_map="auto" if self.device == "cuda" else "cpu",
                     trust_remote_code=True
                 )
 
@@ -112,24 +114,39 @@ class FastVLMHandler:
             return None
 
         try:
-            # Process image
-            pixel_values = self.image_processor(
-                images=image,
-                return_tensors="pt"
-            ).pixel_values.to(self.device)
+            # Prepare image for the model
+            # FastVLM expects the image to be processed by its internal vision encoder
+            image = image.convert("RGB")
 
-            # Prepare text input
-            prompt = "Describe this image:"
-            input_ids = self.tokenizer(
+            # Build the prompt with image token placeholder
+            # The image token index is -200 for FastVLM
+            prompt = f"<image>{IMAGE_TOKEN_INDEX}</image>\nDescribe this image:"
+
+            # Tokenize the prompt
+            inputs = self.tokenizer(
                 prompt,
-                return_tensors="pt"
-            ).input_ids.to(self.device)
+                return_tensors="pt",
+                padding=True
+            )
+
+            # Move inputs to device
+            input_ids = inputs["input_ids"].to(self.device)
+            attention_mask = inputs.get("attention_mask")
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+
+            # Prepare image for the model
+            # The model will extract vision features internally
+            # We need to pass pixel values through the vision encoder
+            image_tensor = self._prepare_image(image)
 
             # Generate description
             with torch.no_grad():
                 output_ids = self.model.generate(
                     input_ids=input_ids,
-                    pixel_values=pixel_values,
+                    attention_mask=attention_mask,
+                    images=image_tensor if hasattr(self.model, 'vision_tower') else None,
+                    pixel_values=image_tensor,
                     max_new_tokens=max_length,
                     temperature=temperature,
                     do_sample=True,
@@ -138,7 +155,7 @@ class FastVLMHandler:
 
             # Decode output
             description = self.tokenizer.decode(
-                output_ids[0],
+                output_ids[0][input_ids.shape[1]:],
                 skip_special_tokens=True
             )
 
@@ -150,6 +167,37 @@ class FastVLMHandler:
             logger.error(traceback.format_exc())
             return None
 
+    def _prepare_image(self, image: Image.Image) -> torch.Tensor:
+        """
+        Prepare image tensor for the model
+
+        Args:
+            image: PIL Image object
+
+        Returns:
+            Image tensor
+        """
+        try:
+            # Resize image to a standard size
+            image = image.resize((336, 336))
+
+            # Convert to tensor
+            import numpy as np
+            image_array = np.array(image).astype(np.float32) / 255.0
+
+            # Normalize
+            mean = np.array([0.485, 0.456, 0.406])
+            std = np.array([0.229, 0.224, 0.225])
+            image_array = (image_array - mean) / std
+
+            # Convert to tensor and add batch dimension
+            image_tensor = torch.from_numpy(image_array).permute(2, 0, 1).unsqueeze(0)
+            return image_tensor.to(self.device)
+
+        except Exception as e:
+            logger.error(f"Error preparing image: {e}")
+            return torch.zeros(1, 3, 336, 336).to(self.device)
+
     def is_ready(self) -> bool:
         """Check if model is loaded and ready"""
         return self._is_loaded and self.model is not None
@@ -158,8 +206,6 @@ class FastVLMHandler:
         """Cleanup and free resources"""
         if self.model is not None:
             del self.model
-        if self.image_processor is not None:
-            del self.image_processor
         if self.tokenizer is not None:
             del self.tokenizer
         torch.cuda.empty_cache() if self.device == "cuda" else None
