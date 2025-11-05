@@ -15,7 +15,7 @@ models_dir = Path(__file__).parent / "models"
 models_dir.mkdir(exist_ok=True)
 os.environ['HF_HOME'] = str(models_dir)
 
-from camera_utils import CameraCapture
+from camera_utils import CameraCapture, get_available_cameras, get_builtin_camera_id
 from model_handler import FastVLMHandler
 
 # Setup logging
@@ -53,10 +53,26 @@ class CameraDescriptionApp:
 
     def initialize(self) -> bool:
         """Initialize camera and model"""
+        # Show available cameras
+        logger.info("=" * 60)
+        logger.info("Available Cameras:")
+        cameras = get_available_cameras()
+        for cam in cameras:
+            builtin_label = " [Built-in]" if cam.get("is_builtin", False) else ""
+            logger.info(f"  Device ID {cam['id']}: {cam['name']}{builtin_label}")
+        logger.info("=" * 60)
+
         # Initialize camera
         camera_config = self.config.get('camera', {})
+        device_id = camera_config.get('device_id', None)
+
+        # If device_id is not specified or is None, use built-in camera
+        if device_id is None:
+            device_id = get_builtin_camera_id()
+            logger.info(f"No device_id specified in config. Using built-in camera (device_id: {device_id})")
+
         self.camera = CameraCapture(
-            device_id=camera_config.get('device_id', 0),
+            device_id=device_id,
             width=camera_config.get('frame_width', 640),
             height=camera_config.get('frame_height', 480),
             fps=camera_config.get('fps', 30)
