@@ -1,0 +1,20 @@
+# Camera Configuration
+camera:
+  device_id: 0
+  frame_width: 640
+  frame_height: 480
+  fps: 30
+
+# Model Configuration
+model:
+  model_name: "apple/FastVLM-1.5B"
+  device: "cuda"  # or "cpu"
+  max_length: 100
+  temperature: 0.7
+
+# Processing Configuration
+processing:
+  inference_interval: 2  # Process every N frames
+  display_font_size: 0.6
+  text_color: [0, 255, 0]  # BGR format for OpenCV
+  background_color: [0, 0, 0]
