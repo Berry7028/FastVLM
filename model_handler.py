@@ -54,32 +54,31 @@ class FastVLMHandler:
 
             # Load model with appropriate precision
             logger.info("Loading model weights...")
-            try:
-                # Try with flash_attention_2 first (if CUDA available)
-                if self.device == "cuda":
+
+            if self.device == "cuda":
+                try:
+                    # Try with flash_attention_2 first (if CUDA available)
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_name,
                         torch_dtype=torch.float16,
-                        device_map="auto",
                         trust_remote_code=True,
                         attn_implementation="flash_attention_2"
-                    )
-                else:
+                    ).to(self.device)
+                except Exception as e:
+                    # Fallback without flash_attention_2
+                    logger.warning(f"Flash attention not available: {e}")
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_name,
-                        torch_dtype=torch.float32,
-                        device_map="cpu",
+                        torch_dtype=torch.float16,
                         trust_remote_code=True
-                    )
-            except Exception as e:
-                # Fallback without flash_attention_2
-                logger.warning(f"Flash attention not available, using standard attention: {e}")
+                    ).to(self.device)
+            else:
+                # CPU loading - no device_map, just use .to()
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                    device_map="auto" if self.device == "cuda" else "cpu",
+                    torch_dtype=torch.float32,
                     trust_remote_code=True
-                )
+                ).to(self.device)
 
             self.model.eval()
             self._is_loaded = True
